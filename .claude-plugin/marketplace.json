@@ -1,6 +1,6 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "claude-plugins",
+  "name": "sams-claude-menagerie",
   "description": "Sam Phinizy's Claude Code plugins",
   "owner": {
     "name": "Sam Phinizy",
