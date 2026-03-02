@@ -1,0 +1,19 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "claude-plugins",
+  "description": "Sam Phinizy's Claude Code plugins",
+  "owner": {
+    "name": "Sam Phinizy",
+    "url": "https://github.com/sam-phinizy"
+  },
+  "plugins": [
+    {
+      "name": "joan",
+      "description": "Local code review gate for AI agents via Forgejo. Agents push work to a local Forgejo instance, a human reviews it, and only approved work gets pushed to the real upstream.",
+      "source": {
+        "source": "github",
+        "repo": "sam-phinizy/joan"
+      }
+    }
+  ]
+}
