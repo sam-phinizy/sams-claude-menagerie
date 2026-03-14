@@ -14,6 +14,15 @@
         "source": "github",
         "repo": "sam-phinizy/joan"
       }
+    },
+    {
+      "name": "remindctl",
+      "description": "Apple Reminders integration via remindctl-mcp. MCP tools for full CRUD on reminders, plus a text-to-reminders skill that parses emails, Slack threads, and meeting notes into structured reminders with smart due dates.",
+      "source": {
+        "source": "github",
+        "repo": "sam-phinizy/remindctl-mcp",
+        "path": "plugin"
+      }
     }
   ]
 }

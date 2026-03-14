@@ -1,0 +1,25 @@
+# Sam's Claude Menagerie
+
+A collection of Claude Code plugins by [Sam Phinizy](https://github.com/sam-phinizy).
+
+## Plugins
+
+| Plugin | Description | Repo |
+|--------|-------------|------|
+| **joan** | Local code review gate for AI agents via Forgejo. Agents push work to a local Forgejo instance, a human reviews it, and only approved work gets pushed upstream. | [sam-phinizy/joan](https://github.com/sam-phinizy/joan) |
+| **remindctl** | Apple Reminders integration via remindctl-mcp. Full CRUD on reminders, plus a text-to-reminders skill that parses emails, Slack threads, and meeting notes into structured reminders with smart due dates. | [sam-phinizy/remindctl-mcp](https://github.com/sam-phinizy/remindctl-mcp) |
+
+## Installation
+
+Install the marketplace in Claude Code:
+
+```bash
+claude plugin add sam-phinizy/sams-claude-menagerie
+```
+
+Or install individual plugins directly:
+
+```bash
+claude plugin add sam-phinizy/joan
+claude plugin add sam-phinizy/remindctl-mcp --path plugin
+```
