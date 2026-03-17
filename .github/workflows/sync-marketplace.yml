@@ -1,4 +1,4 @@
-name: Sync Marketplace README
+name: Sync Marketplace README (${{ github.event.client_payload.plugin || github.event_name }})
 
 on:
   repository_dispatch:
@@ -16,6 +16,12 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
+      - name: Show trigger info
+        run: |
+          echo "Triggered by: ${{ github.event_name }}"
+          echo "Plugin: ${{ github.event.client_payload.plugin || 'n/a' }}"
+          echo "Tag: ${{ github.event.client_payload.tag || 'n/a' }}"
+
       - name: Get app token
         id: app-token
         uses: tibdex/github-app-token@v2
