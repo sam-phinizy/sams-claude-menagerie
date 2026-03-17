@@ -12,15 +12,16 @@ A collection of Claude Code plugins by [Sam Phinizy](https://github.com/sam-phin
 
 ## Installation
 
-Install the marketplace in Claude Code:
+Inside Claude Code, add this marketplace:
 
-```bash
-claude plugin add sam-phinizy/sams-claude-menagerie
+```
+/plugin marketplace add sam-phinizy/sams-claude-menagerie
 ```
 
-Or install individual plugins directly:
+Then install individual plugins:
 
-```bash
-claude plugin add sam-phinizy/joan
-claude plugin add sam-phinizy/remindctl-mcp --path plugin
+```
+/plugin install joan@sams-claude-menagerie
+/plugin install remindctl@sams-claude-menagerie
+/plugin install claude-obsidian-thinker@sams-claude-menagerie
 ```
