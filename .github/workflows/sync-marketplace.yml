@@ -1,0 +1,81 @@
+name: Sync Marketplace README
+
+on:
+  repository_dispatch:
+    types: [plugin-published]
+  push:
+    paths:
+      - ".claude-plugin/marketplace.json"
+  workflow_dispatch:
+
+concurrency:
+  group: sync-marketplace
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get app token
+        id: app-token
+        uses: tibdex/github-app-token@v2
+        with:
+          app_id: ${{ secrets.APP_ID }}
+          private_key: ${{ secrets.APP_PRIVATE_KEY }}
+          repositories: "sams-claude-menagerie"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Generate README
+        run: |
+          cat .claude-plugin/marketplace.json | python3 - <<'EOF'
+          import json, sys
+
+          with open(".claude-plugin/marketplace.json") as f:
+            data = json.load(f)
+
+          plugins = data["plugins"]
+
+          lines = []
+          lines.append("# Sam's Claude Menagerie\n")
+          lines.append("A collection of Claude Code plugins by [Sam Phinizy](https://github.com/sam-phinizy).\n")
+          lines.append("## Plugins\n")
+          lines.append("| Plugin | Description | Repo |")
+          lines.append("|--------|-------------|------|")
+
+          for p in plugins:
+            name = p["name"]
+            desc = p["description"]
+            repo = p["source"]["repo"]
+            lines.append(f"| **{name}** | {desc} | [{repo}](https://github.com/{repo}) |")
+
+          lines.append("")
+          lines.append("## Installation\n")
+          lines.append("Inside Claude Code, add this marketplace:\n")
+          lines.append("```")
+          lines.append("/plugin marketplace add sam-phinizy/sams-claude-menagerie")
+          lines.append("```\n")
+          lines.append("Then install individual plugins:\n")
+          lines.append("```")
+          for p in plugins:
+            lines.append(f"/plugin install {p['name']}@sams-claude-menagerie")
+          lines.append("```")
+
+          with open("README.md", "w") as f:
+            f.write("\n".join(lines) + "\n")
+
+          print("README.md generated")
+          EOF
+
+      - name: Commit if changed
+        run: |
+          git config user.name "menagerie-publisher[bot]"
+          git config user.email "menagerie-publisher[bot]@users.noreply.github.com"
+          git diff --quiet README.md && echo "No changes to README" && exit 0
+          git add README.md
+          TRIGGER="${{ github.event.client_payload.plugin || 'marketplace.json update' }}"
+          git commit -m "chore: regenerate README ($TRIGGER)"
+          git push
