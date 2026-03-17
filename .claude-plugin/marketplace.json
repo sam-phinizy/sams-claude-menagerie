@@ -23,6 +23,14 @@
         "repo": "sam-phinizy/remindctl-mcp",
         "path": "plugin"
       }
+    },
+    {
+      "name": "claude-obsidian-thinker",
+      "description": "Lightweight session context management via Obsidian. Writes session summaries, project notes, daily logs, and a searchable knowledge base. Commands: /closeout, /recall, /wakeup, /pickup.",
+      "source": {
+        "source": "github",
+        "repo": "sam-phinizy/claude-obsidian-thinker"
+      }
     }
   ]
 }
