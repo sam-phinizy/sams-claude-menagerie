@@ -1,4 +1,4 @@
-name: Sync Marketplace README (${{ github.event.client_payload.plugin || github.event_name }})
+name: Sync Marketplace
 
 on:
   repository_dispatch:
@@ -35,7 +35,7 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
 
       - name: Update plugin version in marketplace.json
-        if: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.plugin != '' && github.event.client_payload.tag != '' }}
+        if: github.event_name == 'repository_dispatch'
         env:
           PLUGIN: ${{ github.event.client_payload.plugin }}
           TAG: ${{ github.event.client_payload.tag }}
