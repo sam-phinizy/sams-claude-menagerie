@@ -34,10 +34,44 @@ jobs:
         with:
           token: ${{ steps.app-token.outputs.token }}
 
+      - name: Update plugin version in marketplace.json
+        if: github.event_name == 'repository_dispatch' && github.event.client_payload.plugin != '' && github.event.client_payload.tag != ''
+        env:
+          PLUGIN: ${{ github.event.client_payload.plugin }}
+          TAG: ${{ github.event.client_payload.tag }}
+        run: |
+          python3 - <<'EOF'
+          import json, os, sys
+
+          plugin_name = os.environ["PLUGIN"]
+          tag = os.environ["TAG"]
+
+          with open(".claude-plugin/marketplace.json") as f:
+            data = json.load(f)
+
+          updated = False
+          for p in data["plugins"]:
+            if p["name"] == plugin_name:
+              p["version"] = tag
+              p["source"]["ref"] = tag
+              updated = True
+              break
+
+          if not updated:
+            print(f"Plugin '{plugin_name}' not found in marketplace.json, skipping version update")
+            sys.exit(0)
+
+          with open(".claude-plugin/marketplace.json", "w") as f:
+            json.dump(data, f, indent=2)
+            f.write("\n")
+
+          print(f"Updated {plugin_name} to {tag}")
+          EOF
+
       - name: Generate README
         run: |
-          cat .claude-plugin/marketplace.json | python3 - <<'EOF'
-          import json, sys
+          python3 - <<'EOF'
+          import json
 
           with open(".claude-plugin/marketplace.json") as f:
             data = json.load(f)
@@ -48,14 +82,15 @@ jobs:
           lines.append("# Sam's Claude Menagerie\n")
           lines.append("A collection of Claude Code plugins by [Sam Phinizy](https://github.com/sam-phinizy).\n")
           lines.append("## Plugins\n")
-          lines.append("| Plugin | Description | Repo |")
-          lines.append("|--------|-------------|------|")
+          lines.append("| Plugin | Version | Description | Repo |")
+          lines.append("|--------|---------|-------------|------|")
 
           for p in plugins:
             name = p["name"]
             desc = p["description"]
             repo = p["source"]["repo"]
-            lines.append(f"| **{name}** | {desc} | [{repo}](https://github.com/{repo}) |")
+            version = p.get("version", "latest")
+            lines.append(f"| **{name}** | {version} | {desc} | [{repo}](https://github.com/{repo}) |")
 
           lines.append("")
           lines.append("## Installation\n")
@@ -79,8 +114,16 @@ jobs:
         run: |
           git config user.name "menagerie-publisher[bot]"
           git config user.email "menagerie-publisher[bot]@users.noreply.github.com"
-          git diff --quiet README.md && echo "No changes to README" && exit 0
-          git add README.md
-          TRIGGER="${{ github.event.client_payload.plugin || 'marketplace.json update' }}"
-          git commit -m "chore: regenerate README ($TRIGGER)"
+          git add README.md .claude-plugin/marketplace.json
+          git diff --cached --quiet && echo "No changes" && exit 0
+          PLUGIN="${{ github.event.client_payload.plugin || '' }}"
+          TAG="${{ github.event.client_payload.tag || '' }}"
+          if [ -n "$PLUGIN" ] && [ -n "$TAG" ]; then
+            MSG="chore: update $PLUGIN to $TAG"
+          elif [ -n "$PLUGIN" ]; then
+            MSG="chore: regenerate README — triggered by $PLUGIN"
+          else
+            MSG="chore: regenerate README — marketplace.json update"
+          fi
+          git commit -m "$MSG"
           git push
