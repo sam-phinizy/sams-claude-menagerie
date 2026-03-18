@@ -8,7 +8,7 @@ A collection of Claude Code plugins by [Sam Phinizy](https://github.com/sam-phin
 |--------|---------|-------------|------|
 | **joan** | latest | Local code review gate for AI agents via Forgejo. Agents push work to a local Forgejo instance, a human reviews it, and only approved work gets pushed to the real upstream. | [sam-phinizy/joan](https://github.com/sam-phinizy/joan) |
 | **remindctl** | latest | Apple Reminders integration via remindctl-mcp. MCP tools for full CRUD on reminders, plus a text-to-reminders skill that parses emails, Slack threads, and meeting notes into structured reminders with smart due dates. | [sam-phinizy/remindctl-mcp](https://github.com/sam-phinizy/remindctl-mcp) |
-| **claude-obsidian-thinker** | latest | Lightweight session context management via Obsidian. Writes session summaries, project notes, daily logs, and a searchable knowledge base. Commands: /closeout, /recall, /wakeup, /pickup. | [sam-phinizy/claude-obsidian-thinker](https://github.com/sam-phinizy/claude-obsidian-thinker) |
+| **claude-obsidian-thinker** | v0.1.9 | Lightweight session context management via Obsidian. Writes session summaries, project notes, daily logs, and a searchable knowledge base. Commands: /closeout, /recall, /wakeup, /pickup. | [sam-phinizy/claude-obsidian-thinker](https://github.com/sam-phinizy/claude-obsidian-thinker) |
 
 ## Installation
 

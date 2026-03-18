@@ -29,8 +29,10 @@
       "description": "Lightweight session context management via Obsidian. Writes session summaries, project notes, daily logs, and a searchable knowledge base. Commands: /closeout, /recall, /wakeup, /pickup.",
       "source": {
         "source": "github",
-        "repo": "sam-phinizy/claude-obsidian-thinker"
-      }
+        "repo": "sam-phinizy/claude-obsidian-thinker",
+        "ref": "v0.1.9"
+      },
+      "version": "v0.1.9"
     }
   ]
 }
