@@ -35,80 +35,14 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
 
       - name: Update plugin version in marketplace.json
-        if: github.event_name == 'repository_dispatch' && github.event.client_payload.plugin != '' && github.event.client_payload.tag != ''
+        if: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.plugin != '' && github.event.client_payload.tag != '' }}
         env:
           PLUGIN: ${{ github.event.client_payload.plugin }}
           TAG: ${{ github.event.client_payload.tag }}
-        run: |
-          python3 - <<'EOF'
-          import json, os, sys
-
-          plugin_name = os.environ["PLUGIN"]
-          tag = os.environ["TAG"]
-
-          with open(".claude-plugin/marketplace.json") as f:
-            data = json.load(f)
-
-          updated = False
-          for p in data["plugins"]:
-            if p["name"] == plugin_name:
-              p["version"] = tag
-              p["source"]["ref"] = tag
-              updated = True
-              break
-
-          if not updated:
-            print(f"Plugin '{plugin_name}' not found in marketplace.json, skipping version update")
-            sys.exit(0)
-
-          with open(".claude-plugin/marketplace.json", "w") as f:
-            json.dump(data, f, indent=2)
-            f.write("\n")
-
-          print(f"Updated {plugin_name} to {tag}")
-          EOF
+        run: python3 scripts/update_version.py
 
       - name: Generate README
-        run: |
-          python3 - <<'EOF'
-          import json
-
-          with open(".claude-plugin/marketplace.json") as f:
-            data = json.load(f)
-
-          plugins = data["plugins"]
-
-          lines = []
-          lines.append("# Sam's Claude Menagerie\n")
-          lines.append("A collection of Claude Code plugins by [Sam Phinizy](https://github.com/sam-phinizy).\n")
-          lines.append("## Plugins\n")
-          lines.append("| Plugin | Version | Description | Repo |")
-          lines.append("|--------|---------|-------------|------|")
-
-          for p in plugins:
-            name = p["name"]
-            desc = p["description"]
-            repo = p["source"]["repo"]
-            version = p.get("version", "latest")
-            lines.append(f"| **{name}** | {version} | {desc} | [{repo}](https://github.com/{repo}) |")
-
-          lines.append("")
-          lines.append("## Installation\n")
-          lines.append("Inside Claude Code, add this marketplace:\n")
-          lines.append("```")
-          lines.append("/plugin marketplace add sam-phinizy/sams-claude-menagerie")
-          lines.append("```\n")
-          lines.append("Then install individual plugins:\n")
-          lines.append("```")
-          for p in plugins:
-            lines.append(f"/plugin install {p['name']}@sams-claude-menagerie")
-          lines.append("```")
-
-          with open("README.md", "w") as f:
-            f.write("\n".join(lines) + "\n")
-
-          print("README.md generated")
-          EOF
+        run: python3 scripts/generate_readme.py
 
       - name: Commit if changed
         run: |
