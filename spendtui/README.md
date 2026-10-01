@@ -3,38 +3,34 @@
 A terminal dashboard for your **Claude API** and **Fireworks AI** spend, built
 with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 
-```
-spendtui   1 Overview  2 Daily  3 Claude  4 Fireworks
-◀ Month to date ▶  Sep 1 – Sep 18 UTC   updated 12:00
+History is kept in a local [DuckDB](https://duckdb.org) file, so it opens
+instantly from cache, keeps working offline, and you can query it yourself.
 
-╭──────────────────────────╮╭──────────────────────────╮╭──────────────────────────╮
-│ Claude                   ││ Fireworks                ││ Combined                 │
-│ $225.57                  ││ $129.88                  ││ $355.45                  │
-│ today $14.69             ││ today $8.07              ││ projected $592.42        │
-│ projected $375.95        ││ projected $216.47        ││ avg/day $19.75           │
-│ ██████████████▋········· │╰──────────────────────────╯╰──────────────────────────╯
-│ 56% of $400.00 budget    │
-╰──────────────────────────╯
+![Week over week](docs/weekly.png)
+![Model by model](docs/models.png)
+![Overview](docs/overview.png)
 
-Daily spend  █ Claude  █ Fireworks
-$25.10 │███ ███ ███ ███         ███
-       │███ ███ ███ ███         ███     ███                 ███ ███ ███ ███ ███
-$12.55 │███ ███ ███ ███ ███ ███ ███ ███ ███ ███ ███ ███ ███ ███ ███ ███ ███ ███
-       └────────────────────────────────────────────────────────────────────────
-        Sep 1                                                             Sep 18
-```
+<sub>Screenshots use `--demo` data.</sub>
 
 ## Views
 
 | Key | View | What it shows |
 |---|---|---|
-| `1` | Overview | One card per provider (total, today, month-end projection, budget bar) and a combined card, over a stacked daily column chart |
-| `2` | Daily | Day-by-day table, newest first, with per-provider columns and a total bar |
-| `3` | Claude | Daily chart, plus a per-model breakdown with spend, share and token counts |
-| `4` | Fireworks | The same, per model / dedicated deployment / training job |
+| `1` | Overview | One card per provider (total, today, month-end projection, 7-day change, budget bar) and a combined card, over a stacked daily column chart |
+| `2` | Weekly | Week over week: last 7 days vs the 7 before for each provider, a 12-week sparkline, and a table of calendar weeks (Monday start) with the change from the week before |
+| `3` | Models | Every model from both providers, sorted by spend in the selected range, with last 7d / prior 7d / change and a 12-week sparkline. `j`/`k` move the cursor; the selected model's daily chart and token totals show underneath |
+| `4` | Daily | Day-by-day table, newest first, with per-provider columns and a total bar |
+| `5` | Claude | Daily chart, plus a per-model breakdown with spend, share and token counts |
+| `6` | Fireworks | The same, per model / dedicated deployment / training job |
 
 Other keys: `←`/`→` (or `h`/`l`) cycle the range (Month to date, Last 7 days,
-Last 30 days, Last month, Last 90 days), `j`/`k` scroll, `r` refresh, `q` quit.
+Last 30 days, Last month, Last 90 days), `j`/`k` scroll or move, `r` refresh,
+`q` quit.
+
+Week-over-week changes are colored by what they mean for your bill: red ▲ when
+spend went up, green ▼ when it went down. The current week is marked `(wtd)`
+and isn't compared, since a partial week against a full one would always look
+like a drop.
 
 All dates are UTC days, which is how both providers bucket billing.
 
@@ -43,6 +39,10 @@ All dates are UTC days, which is how both providers bucket billing.
 ```fish
 go install github.com/sam-phinizy/sams-claude-menagerie/spendtui@latest
 ```
+
+DuckDB is linked in through cgo, so you need a C compiler (Xcode command line
+tools on macOS, `gcc` on Linux). Prebuilt DuckDB libraries ship for
+macOS and Linux on amd64/arm64, and the first build takes a minute.
 
 or from a checkout: `cd spendtui; go build .`
 
@@ -67,7 +67,41 @@ set -Ux SPENDTUI_FIREWORKS_BUDGET 250
 Configure either provider or both; whichever has credentials shows up.
 
 Flags: `--claude-budget`, `--fireworks-budget` (override the env vars),
-`--refresh 5m` (auto-refresh interval; `0` disables), `--demo`.
+`--refresh 5m` (auto-refresh interval; `0` disables), `--range 1-5` (initial
+range), `--db PATH`, `--backfill-days 180`, `--demo`.
+
+`--snapshot VIEW` prints a single frame and exits instead of opening the TUI
+(`--width`/`--height` set its size; `COLORTERM=truecolor` keeps full color when
+piping). Handy for a status script, or for the screenshots above.
+
+## Storage
+
+Spend lives in `~/.local/share/spendtui/spend.duckdb` (or under
+`$XDG_DATA_HOME`; override with `--db`). One table:
+
+```sql
+spend(provider, day DATE, model, usd DOUBLE, input_tokens, output_tokens, fetched_at)
+-- primary key (provider, day, model)
+```
+
+- **First run** backfills `--backfill-days` (default 180) per provider.
+- **Every refresh after that** refetches only from 7 days before the newest
+  stored day, and replaces that window. Both providers revise recent days, and a
+  model can drop out of a revised day, so the window is replaced rather than
+  upserted.
+- **On launch** the TUI shows what's stored right away, then syncs in the
+  background. If a sync fails you keep the stored numbers, with the error shown
+  on the card.
+- `--demo` uses an in-memory database, so demo rows never touch your file.
+
+DuckDB allows a single writer process, so a second spendtui pointed at the
+same file will fail to open it. Query it while spendtui isn't running:
+
+```fish
+duckdb ~/.local/share/spendtui/spend.duckdb "
+  SELECT provider, model, date_trunc('week', day) AS week, round(sum(usd), 2) AS usd
+  FROM spend GROUP BY ALL ORDER BY week DESC, usd DESC LIMIT 20"
+```
 
 ## Where the numbers come from
 
@@ -76,10 +110,8 @@ Flags: `--claude-budget`, `--fireworks-budget` (override the env vars),
 | Claude | `GET /v1/organizations/cost_report` (Anthropic Admin API) | Daily buckets grouped by `description`, so each line carries its model. Amounts are USD cents. Web search and code execution show up as their own rows. Priority Tier costs are **not** included in this endpoint. The Admin API isn't available to individual (non-organization) accounts. |
 | Fireworks | `GET /v1/accounts/{account}/billingUsage` | Daily buckets across `serverlessCosts`, `dedicatedCosts` and `trainingCosts`; cost is `costNanoUsd`. Windows are capped at 31 days, so longer ranges are fetched in chunks. Fireworks reports `0` cost when a line has no authoritative rate yet, which doesn't mean it was free. |
 
-On each refresh, spendtui fetches one window that covers every selectable range
-(back to the start of last month or 90 days ago, whichever is earlier), so
-switching ranges doesn't trigger a refetch. Both APIs lag real usage by a few
-minutes.
+Switching ranges or views never refetches; everything is computed from the
+stored history. Both APIs lag real usage by a few minutes.
 
 The month-end projection is month-to-date spend ÷ days elapsed (today counts
 as a full day) × days in the month. It only appears on the Month to date range.
@@ -87,12 +119,14 @@ as a full day) × days in the month. It only appears on the Month to date range.
 ## Layout
 
 ```
-main.go                     flags, env, provider wiring
-internal/spend              provider-neutral Line type, ranges, rollups, projection
+main.go                     flags, env, provider wiring, --snapshot
+internal/spend              provider-neutral Line type, ranges, daily/weekly
+                            rollups, week-over-week, projection
 internal/anthropic          Admin API cost_report client
 internal/fireworks          billingUsage client
+internal/store              DuckDB persistence and incremental sync
 internal/demo               deterministic fake providers for --demo
-internal/ui                 Bubble Tea model, views, charts
+internal/ui                 Bubble Tea model, views, charts, sparklines
 ```
 
 Adding another provider means implementing `spend.Provider`

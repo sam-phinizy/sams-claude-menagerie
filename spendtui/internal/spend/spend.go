@@ -116,3 +116,69 @@ func ProjectMonth(total float64, r Range, now time.Time) float64 {
 	}
 	return total / float64(elapsed) * float64(monthDays)
 }
+
+// WeekStart returns the Monday (UTC) of t's week.
+func WeekStart(t time.Time) time.Time {
+	d := Day(t)
+	return d.AddDate(0, 0, -((int(d.Weekday()) + 6) % 7))
+}
+
+// Weekly totals calendar weeks (Monday–Sunday, UTC), oldest first. The last
+// entry is the current, partial week.
+func Weekly(lines []Line, weeks int, now time.Time) []float64 {
+	out := make([]float64, weeks)
+	first := WeekStart(now).AddDate(0, 0, -7*(weeks-1))
+	for _, l := range lines {
+		d := Day(l.Day)
+		if d.Before(first) {
+			continue
+		}
+		if i := int(d.Sub(first).Hours() / 24 / 7); i < weeks {
+			out[i] += l.USD
+		}
+	}
+	return out
+}
+
+// Between sums spend in [start, end).
+func Between(lines []Line, start, end time.Time) float64 {
+	t := 0.0
+	for _, l := range lines {
+		if d := Day(l.Day); !d.Before(start) && d.Before(end) {
+			t += l.USD
+		}
+	}
+	return t
+}
+
+// Trailing compares the last seven days (including today) with the seven
+// before them.
+func Trailing(lines []Line, now time.Time) (last7, prior7 float64) {
+	end := Day(now).AddDate(0, 0, 1)
+	return Between(lines, end.AddDate(0, 0, -7), end), Between(lines, end.AddDate(0, 0, -14), end.AddDate(0, 0, -7))
+}
+
+// ForModel keeps only model's lines.
+func ForModel(lines []Line, model string) []Line {
+	var out []Line
+	for _, l := range lines {
+		if l.Model == model {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// Models lists the distinct models in lines.
+func Models(lines []Line) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, l := range lines {
+		if !seen[l.Model] {
+			seen[l.Model] = true
+			out = append(out, l.Model)
+		}
+	}
+	sort.Strings(out)
+	return out
+}

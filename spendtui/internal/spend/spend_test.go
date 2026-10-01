@@ -36,3 +36,26 @@ func TestProjectMonth(t *testing.T) {
 		t.Fatalf("non-MTD projection = %v, want 0", got)
 	}
 }
+
+func TestWeeklyAndTrailing(t *testing.T) {
+	now := time.Date(2026, 9, 17, 9, 0, 0, 0, time.UTC) // Thursday
+	if ws := WeekStart(now); ws.Weekday() != time.Monday || ws.Day() != 14 {
+		t.Fatalf("week start = %v", ws)
+	}
+	if ws := WeekStart(time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)); ws.Day() != 14 { // Sunday
+		t.Fatalf("sunday week start = %v", ws)
+	}
+	var lines []Line
+	for d := 0; d < 21; d++ {
+		lines = append(lines, Line{Day: now.AddDate(0, 0, -d), Model: "m", USD: float64(d)})
+	}
+	w := Weekly(lines, 3, now)
+	// Current week Mon 14–Thu 17 is d=3..0 → 6; prior week d=4..10 → 49.
+	if w[2] != 6 || w[1] != 49 {
+		t.Fatalf("weekly = %v", w)
+	}
+	last, prior := Trailing(lines, now)
+	if last != 21 || prior != 70 { // 0..6, 7..13
+		t.Fatalf("trailing = %v, %v", last, prior)
+	}
+}

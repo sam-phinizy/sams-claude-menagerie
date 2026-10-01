@@ -177,3 +177,47 @@ func columnChart(layers []series, height, width int, firstLabel, lastLabel strin
 	b.WriteString(strings.Repeat(" ", axisW+1) + mutedStyle.Render(firstLabel+strings.Repeat(" ", max(pad, 0))+lastLabel))
 	return b.String()
 }
+
+var (
+	upColor   = lipgloss.AdaptiveColor{Light: "#B91C1C", Dark: "#F87171"} // spend went up
+	downColor = lipgloss.AdaptiveColor{Light: "#15803D", Dark: "#4ADE80"}
+)
+
+// delta renders the change from prev to cur as a colored percentage. Rising
+// spend is red, falling is green.
+func delta(cur, prev float64) string {
+	switch {
+	case prev == 0 && cur == 0:
+		return mutedStyle.Render("—")
+	case prev == 0:
+		return lipgloss.NewStyle().Foreground(upColor).Render("new")
+	}
+	pct := (cur - prev) / prev * 100
+	switch {
+	case math.Abs(pct) < 0.5:
+		return mutedStyle.Render("±0%")
+	case pct > 0:
+		return lipgloss.NewStyle().Foreground(upColor).Render(fmt.Sprintf("▲%.0f%%", pct))
+	default:
+		return lipgloss.NewStyle().Foreground(downColor).Render(fmt.Sprintf("▼%.0f%%", -pct))
+	}
+}
+
+// sparkline draws one block per value, scaled to the largest.
+func sparkline(vals []float64, color lipgloss.TerminalColor) string {
+	levels := []rune("▁▂▃▄▅▆▇█")
+	maxV := 0.0
+	for _, v := range vals {
+		maxV = math.Max(maxV, v)
+	}
+	var b strings.Builder
+	for _, v := range vals {
+		if v <= 0 || maxV == 0 {
+			b.WriteString(mutedStyle.Render("·"))
+			continue
+		}
+		i := int(math.Round(v / maxV * float64(len(levels)-1)))
+		b.WriteString(lipgloss.NewStyle().Foreground(color).Render(string(levels[i])))
+	}
+	return b.String()
+}

@@ -14,10 +14,15 @@ import (
 	"github.com/sam-phinizy/sams-claude-menagerie/spendtui/internal/spend"
 )
 
-// Source is a provider plus how the UI should present it.
+// Source is one provider as the UI sees it.
 type Source struct {
-	Provider spend.Provider
-	Budget   float64 // monthly USD; 0 disables the budget bar
+	Name   string
+	Budget float64 // monthly USD; 0 hides the budget bar
+	// Cached returns stored history without touching the network, and when
+	// it was last synced. Optional.
+	Cached func(ctx context.Context, now time.Time) ([]spend.Line, time.Time, error)
+	// Sync refreshes from the provider and returns the full history.
+	Sync func(ctx context.Context, now time.Time) ([]spend.Line, error)
 }
 
 type source struct {
@@ -33,16 +38,22 @@ type view int
 
 const (
 	viewOverview view = iota
+	viewWeekly
+	viewModels
 	viewDaily
-	// provider views follow, one per source
+	numFixedViews
+	// one provider view per source follows
 )
+
+var fixedViewNames = []string{"Overview", "Weekly", "Models", "Daily"}
 
 type Model struct {
 	sources  []*source
 	ranges   []spend.Range
 	rangeIdx int
 	view     view
-	scroll   int
+	scroll   int // Daily / provider tables
+	cursor   int // Models view selection
 	width    int
 	height   int
 	every    time.Duration
@@ -51,27 +62,42 @@ type Model struct {
 }
 
 type fetchedMsg struct {
-	idx   int
-	lines []spend.Line
-	err   error
-	at    time.Time
+	idx    int
+	lines  []spend.Line
+	err    error
+	at     time.Time
+	cached bool
 }
 
 type tickMsg struct{}
 
-func New(srcs []Source, refreshEvery time.Duration) Model {
+// New builds the model. rangeIdx picks the initial range (see spend.Ranges).
+func New(srcs []Source, refreshEvery time.Duration, rangeIdx int) Model {
 	palette := []lipgloss.TerminalColor{claudeColor, fireworksColor, accentColor, warnColor}
 	m := Model{every: refreshEvery, now: time.Now, width: 100, height: 40}
 	for i, s := range srcs {
 		m.sources = append(m.sources, &source{Source: s, color: palette[i%len(palette)]})
 	}
 	m.ranges = spend.Ranges(m.now())
+	if rangeIdx >= 0 && rangeIdx < len(m.ranges) {
+		m.rangeIdx = rangeIdx
+	}
 	m.spin = spinner.New(spinner.WithSpinner(spinner.MiniDot), spinner.WithStyle(mutedStyle))
 	return m
 }
 
+// ViewNames lists the tabs in order, for flags and help text.
+func (m Model) ViewNames() []string {
+	names := append([]string{}, fixedViewNames...)
+	for _, s := range m.sources {
+		names = append(names, s.Name)
+	}
+	return names
+}
+
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.spin.Tick, m.refresh(), m.scheduleTick())
+	cmds := []tea.Cmd{m.spin.Tick, m.loadCached(), m.refresh(), m.scheduleTick()}
+	return tea.Batch(cmds...)
 }
 
 func (m Model) scheduleTick() tea.Cmd {
@@ -81,34 +107,51 @@ func (m Model) scheduleTick() tea.Cmd {
 	return tea.Tick(m.every, func(time.Time) tea.Msg { return tickMsg{} })
 }
 
-// refresh fetches one window that covers every selectable range, so switching
-// ranges afterwards is instant.
+func (m Model) loadCached() tea.Cmd {
+	var cmds []tea.Cmd
+	now := m.now()
+	for i, s := range m.sources {
+		if s.Cached == nil {
+			continue
+		}
+		i, load := i, s.Cached
+		cmds = append(cmds, func() tea.Msg {
+			lines, at, err := load(context.Background(), now)
+			return fetchedMsg{idx: i, lines: lines, err: err, at: at, cached: true}
+		})
+	}
+	return tea.Batch(cmds...)
+}
+
 func (m *Model) refresh() tea.Cmd {
 	m.ranges = spend.Ranges(m.now())
-	start, end := m.ranges[0].Start, m.ranges[0].End
-	for _, r := range m.ranges {
-		if r.Start.Before(start) {
-			start = r.Start
-		}
-		if r.End.After(end) {
-			end = r.End
-		}
-	}
+	now := m.now()
 	var cmds []tea.Cmd
 	for i, s := range m.sources {
 		s.loading = true
-		i, p := i, s.Provider
+		i, sync := i, s.Sync
 		cmds = append(cmds, func() tea.Msg {
-			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
-			lines, err := p.Fetch(ctx, start, end)
+			lines, err := sync(ctx, now)
 			return fetchedMsg{idx: i, lines: lines, err: err, at: time.Now()}
 		})
 	}
 	return tea.Batch(cmds...)
 }
 
-func (m Model) numViews() int { return 2 + len(m.sources) }
+func (m Model) numViews() int { return int(numFixedViews) + len(m.sources) }
+
+// SetView selects a tab by (case-insensitive) name.
+func (m *Model) SetView(name string) error {
+	for i, n := range m.ViewNames() {
+		if strings.EqualFold(n, name) {
+			m.view = view(i)
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown view %q (have %s)", name, strings.Join(m.ViewNames(), ", "))
+}
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -116,6 +159,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 	case fetchedMsg:
 		s := m.sources[msg.idx]
+		if msg.cached {
+			// A cache read that lands after a live sync is stale; drop it.
+			if s.fetched.IsZero() && msg.err == nil {
+				s.lines, s.fetched = msg.lines, msg.at
+			}
+			break
+		}
 		s.loading = false
 		s.err = msg.err
 		if msg.err == nil {
@@ -148,9 +198,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.rangeIdx = (m.rangeIdx + len(m.ranges) - 1) % len(m.ranges)
 			m.scroll = 0
 		case "down", "j":
-			m.scroll++
+			if m.view == viewModels {
+				m.cursor++ // clamped when rendering
+			} else {
+				m.scroll++
+			}
 		case "up", "k":
-			if m.scroll > 0 {
+			if m.view == viewModels {
+				m.cursor = max(m.cursor-1, 0)
+			} else if m.scroll > 0 {
 				m.scroll--
 			}
 		case "r":
@@ -163,13 +219,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) View() string {
 	r := m.ranges[m.rangeIdx]
 	var body string
-	switch {
-	case m.view == viewOverview:
+	switch m.view {
+	case viewOverview:
 		body = m.overview(r)
-	case m.view == viewDaily:
+	case viewWeekly:
+		body = m.weekly()
+	case viewModels:
+		body = m.models(r)
+	case viewDaily:
 		body = m.daily(r)
 	default:
-		body = m.providerView(m.sources[int(m.view)-2], r)
+		body = m.providerView(m.sources[int(m.view-numFixedViews)], r)
 	}
 	frame := lipgloss.JoinVertical(lipgloss.Left, m.header(r), "", body, "", m.footer())
 	// Truncate rather than wrap on terminals too small for the layout.
@@ -177,12 +237,8 @@ func (m Model) View() string {
 }
 
 func (m Model) header(r spend.Range) string {
-	names := []string{"Overview", "Daily"}
-	for _, s := range m.sources {
-		names = append(names, s.Provider.Name())
-	}
 	var tabs []string
-	for i, n := range names {
+	for i, n := range m.ViewNames() {
 		label := fmt.Sprintf("%d %s", i+1, n)
 		if view(i) == m.view {
 			tabs = append(tabs, activeTab.Render(label))
@@ -192,10 +248,13 @@ func (m Model) header(r spend.Range) string {
 	}
 	last := r.End.AddDate(0, 0, -1)
 	rng := fmt.Sprintf("◀ %s ▶  %s – %s UTC", r.Label, r.Start.Format("Jan 2"), last.Format("Jan 2"))
+	if m.view == viewWeekly {
+		rng = "Week over week · weeks start Monday, UTC"
+	}
 	status := ""
 	for _, s := range m.sources {
 		if s.loading {
-			status = m.spin.View() + " refreshing"
+			status = m.spin.View() + " syncing"
 			break
 		}
 	}
@@ -207,7 +266,7 @@ func (m Model) header(r spend.Range) string {
 			}
 		}
 		if !newest.IsZero() {
-			status = "updated " + newest.Local().Format("15:04")
+			status = "synced " + newest.Local().Format("Jan 2 15:04")
 		}
 	}
 	top := titleStyle.Render("spendtui") + "  " + lipgloss.JoinHorizontal(lipgloss.Top, tabs...)
@@ -215,176 +274,23 @@ func (m Model) header(r spend.Range) string {
 }
 
 func (m Model) footer() string {
-	return mutedStyle.Render("tab/1-9 view · ←/→ range · j/k scroll · r refresh · q quit")
+	return mutedStyle.Render("tab/1-9 view · ←/→ range · j/k move · r refresh · q quit")
 }
 
 func (m Model) contentWidth() int { return max(m.width-2, 40) }
 
-func (m Model) overview(r spend.Range) string {
-	now := m.now()
-	var cards []string
-	var layers []series
-	total, totalProj := 0.0, 0.0
-	cardW := max((m.contentWidth()-4*(len(m.sources)+1))/(len(m.sources)+1), 22)
-	for _, s := range m.sources {
-		sum := spend.Summarize(s.lines, r)
-		total += sum.Total
-		proj := spend.ProjectMonth(sum.Total, r, now)
-		totalProj += proj
-		layers = append(layers, series{sum.Daily, s.color})
-		cards = append(cards, m.card(s, sum, r, proj, cardW))
+// Snapshot syncs every source synchronously and renders one frame, for
+// non-interactive use (screenshots, status scripts).
+func Snapshot(srcs []Source, viewName string, rangeIdx, width, height int) (string, error) {
+	m := New(srcs, 0, rangeIdx)
+	if err := m.SetView(viewName); err != nil {
+		return "", err
 	}
-	combined := []string{
-		boldStyle.Render("Combined"),
-		bigNumStyle.Render(usd(total)),
-	}
-	if totalProj > 0 {
-		combined = append(combined, mutedStyle.Render("projected ")+usd(totalProj))
-	}
-	if r.Days() > 0 {
-		combined = append(combined, mutedStyle.Render("avg/day ")+usd(total/float64(r.Days())))
-	}
-	cards = append(cards, cardStyle.Width(cardW).Render(strings.Join(combined, "\n")))
-
-	legend := make([]string, 0, len(m.sources))
-	for _, s := range m.sources {
-		legend = append(legend, lipgloss.NewStyle().Foreground(s.color).Render("█ ")+s.Provider.Name())
-	}
-	chart := columnChart(layers, max(min(m.height-18, 14), 5), m.contentWidth(),
-		r.Start.Format("Jan 2"), r.End.AddDate(0, 0, -1).Format("Jan 2"))
-	return lipgloss.JoinVertical(lipgloss.Left,
-		lipgloss.JoinHorizontal(lipgloss.Top, cards...),
-		"",
-		boldStyle.Render("Daily spend")+"  "+strings.Join(legend, "  "),
-		chart,
-	)
-}
-
-func (m Model) card(s *source, sum spend.Summary, r spend.Range, proj float64, w int) string {
-	name := lipgloss.NewStyle().Bold(true).Foreground(s.color).Render(s.Provider.Name())
-	lines := []string{name}
-	switch {
-	case s.err != nil:
-		lines = append(lines, errStyle.Width(w).Render(truncate(s.err.Error(), w*3)))
-	case s.loading && s.fetched.IsZero():
-		lines = append(lines, m.spin.View()+" loading")
-	default:
-		lines = append(lines, bigNumStyle.Render(usd(sum.Total)))
-		if n := len(sum.Daily); n > 0 && r.End.Equal(spend.Day(m.now()).AddDate(0, 0, 1)) {
-			lines = append(lines, mutedStyle.Render("today ")+usd(sum.Daily[n-1]))
-		}
-		if proj > 0 {
-			lines = append(lines, mutedStyle.Render("projected ")+usd(proj))
-		}
-		if s.Budget > 0 && proj > 0 {
-			frac := sum.Total / s.Budget
-			color := s.color
-			if proj > s.Budget {
-				color = warnColor
-			}
-			lines = append(lines, hbar(frac, w-2, color),
-				mutedStyle.Render(fmt.Sprintf("%.0f%% of %s budget", frac*100, usd(s.Budget))))
-		}
-	}
-	return cardStyle.Width(w).Render(strings.Join(lines, "\n"))
-}
-
-func (m Model) providerView(s *source, r spend.Range) string {
-	if s.err != nil {
-		return errStyle.Width(m.contentWidth()).Render(s.err.Error())
-	}
-	sum := spend.Summarize(s.lines, r)
-	peak, peakDay := 0.0, 0
-	for i, v := range sum.Daily {
-		if v > peak {
-			peak, peakDay = v, i
-		}
-	}
-	stats := []string{
-		lipgloss.NewStyle().Bold(true).Foreground(s.color).Render(s.Provider.Name()) + "  " + bigNumStyle.Render(usd(sum.Total)),
-	}
-	if r.Days() > 0 {
-		stats = append(stats, mutedStyle.Render(fmt.Sprintf("avg/day %s · peak %s on %s",
-			usd(sum.Total/float64(r.Days())), usd(peak), r.Start.AddDate(0, 0, peakDay).Format("Jan 2"))))
-	}
-	chart := columnChart([]series{{sum.Daily, s.color}}, max(min(m.height-20, 10), 4), m.contentWidth(),
-		r.Start.Format("Jan 2"), r.End.AddDate(0, 0, -1).Format("Jan 2"))
-
-	nameW := 32
-	barW := max(m.contentWidth()-nameW-40, 6)
-	rows := []string{boldStyle.Render(fmt.Sprintf("%-*s %10s %6s %8s %8s  %s", nameW, "Model", "Spend", "Share", "In", "Out", ""))}
-	for _, mt := range sum.Models {
-		share := 0.0
-		if sum.Total > 0 {
-			share = mt.USD / sum.Total
-		}
-		rows = append(rows, fmt.Sprintf("%-*s %10s %5.1f%% %8s %8s  %s",
-			nameW, truncate(mt.Model, nameW), usd(mt.USD), share*100,
-			tokens(mt.InputTokens), tokens(mt.OutputTokens), hbar(share, barW, s.color)))
-	}
-	if len(sum.Models) == 0 {
-		rows = append(rows, mutedStyle.Render("no spend in this range"))
-	}
-	rows = m.window(rows, 1, max(m.height-18-strings.Count(chart, "\n"), 3))
-	return lipgloss.JoinVertical(lipgloss.Left, strings.Join(stats, "\n"), "", chart, "", strings.Join(rows, "\n"))
-}
-
-func (m Model) daily(r spend.Range) string {
-	sums := make([]spend.Summary, len(m.sources))
-	maxTotal := 0.0
+	m.width, m.height = width, height
 	for i, s := range m.sources {
-		sums[i] = spend.Summarize(s.lines, r)
+		lines, err := s.Sync(context.Background(), m.now())
+		next, _ := m.Update(fetchedMsg{idx: i, lines: lines, err: err, at: time.Now()})
+		m = next.(Model)
 	}
-	n := r.Days()
-	totals := make([]float64, n)
-	for d := 0; d < n; d++ {
-		for _, sum := range sums {
-			totals[d] += sum.Daily[d]
-		}
-		maxTotal = max(maxTotal, totals[d])
-	}
-	head := fmt.Sprintf("%-12s", "Date")
-	for _, s := range m.sources {
-		head += fmt.Sprintf(" %11s", truncate(s.Provider.Name(), 11))
-	}
-	head += fmt.Sprintf(" %11s", "Total")
-	barW := max(m.contentWidth()-len(head)-2, 6)
-	rows := []string{boldStyle.Render(head)}
-	for d := n - 1; d >= 0; d-- {
-		row := fmt.Sprintf("%-12s", r.Start.AddDate(0, 0, d).Format("Mon Jan 02"))
-		for _, sum := range sums {
-			row += fmt.Sprintf(" %11s", usd(sum.Daily[d]))
-		}
-		frac := 0.0
-		if maxTotal > 0 {
-			frac = totals[d] / maxTotal
-		}
-		rows = append(rows, row+boldStyle.Render(fmt.Sprintf(" %11s", usd(totals[d])))+"  "+hbar(frac, barW, accentColor))
-	}
-	return strings.Join(m.window(rows, 1, max(m.height-8, 5)), "\n")
-}
-
-// window keeps the first `keep` rows (headers) and shows `size` of the rest
-// starting at the scroll offset.
-func (m Model) window(rows []string, keep, size int) []string {
-	body := rows[keep:]
-	off := min(m.scroll, max(len(body)-size, 0))
-	end := min(off+size, len(body))
-	out := append([]string{}, rows[:keep]...)
-	out = append(out, body[off:end]...)
-	if end < len(body) {
-		out = append(out, mutedStyle.Render(fmt.Sprintf("… %d more (j/k to scroll)", len(body)-end)))
-	}
-	return out
-}
-
-func truncate(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	if n <= 1 {
-		return string(r[:n])
-	}
-	return string(r[:n-1]) + "…"
+	return m.View(), nil
 }
