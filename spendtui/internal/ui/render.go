@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/sam-phinizy/sams-claude-menagerie/spendtui/internal/spend"
 )
 
 var (
@@ -220,4 +222,25 @@ func sparkline(vals []float64, color lipgloss.TerminalColor) string {
 		b.WriteString(lipgloss.NewStyle().Foreground(color).Render(string(levels[i])))
 	}
 	return b.String()
+}
+
+func hitRate(t spend.Tokens) string {
+	r := t.CacheHitRate()
+	if r < 0 {
+		return "—"
+	}
+	return fmt.Sprintf("%.0f%%", r*100)
+}
+
+// tokenSummary is a one-line breakdown, or "" when no tokens were reported.
+func tokenSummary(t spend.Tokens) string {
+	if t == (spend.Tokens{}) {
+		return ""
+	}
+	parts := []string{tokens(t.Input) + " in"}
+	if t.CacheRead > 0 || t.CacheWrite > 0 {
+		parts = append(parts, fmt.Sprintf("%s cache read (%s hit)", tokens(t.CacheRead), hitRate(t)),
+			tokens(t.CacheWrite)+" cache write")
+	}
+	return strings.Join(append(parts, tokens(t.Output)+" out"), " · ")
 }

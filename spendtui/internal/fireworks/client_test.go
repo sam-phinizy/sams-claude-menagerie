@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/sam-phinizy/sams-claude-menagerie/spendtui/internal/spend"
 )
 
 func TestFetchChunksWindowsAndParsesBuckets(t *testing.T) {
@@ -21,7 +23,7 @@ func TestFetchChunksWindowsAndParsesBuckets(t *testing.T) {
 			return
 		}
 		w.Write([]byte(`{
-			"serverlessCosts":[{"startTime":"2026-08-01T00:00:00Z","endTime":"2026-08-02T00:00:00Z","modelName":"accounts/fireworks/models/deepseek-v3p1","promptTokens":"1000","completionTokens":"200","costNanoUsd":"2500000000"}],
+			"serverlessCosts":[{"startTime":"2026-08-01T00:00:00Z","endTime":"2026-08-02T00:00:00Z","modelName":"accounts/fireworks/models/deepseek-v3p1","promptTokens":"1000","cachedPromptTokens":"400","completionTokens":"200","costNanoUsd":"2500000000"}],
 			"dedicatedCosts":[{"startTime":"2026-08-01T00:00:00Z","deploymentId":"dep-1","costNanoUsd":1000000000}],
 			"trainingCosts":null}`))
 	}))
@@ -40,7 +42,7 @@ func TestFetchChunksWindowsAndParsesBuckets(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("lines = %+v", lines)
 	}
-	if l := lines[0]; l.Model != "deepseek-v3p1" || l.USD != 2.5 || l.InputTokens != 1000 || l.OutputTokens != 200 {
+	if l := lines[0]; l.Model != "deepseek-v3p1" || l.USD != 2.5 || l.Tokens != (spend.Tokens{Input: 600, CacheRead: 400, Output: 200}) {
 		t.Errorf("serverless = %+v", l)
 	}
 	if l := lines[1]; l.Model != "dedicated: dep-1" || l.USD != 1 {

@@ -10,7 +10,7 @@ func TestSummarize(t *testing.T) {
 	r := Range{Start: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), End: time.Date(2026, 9, 4, 0, 0, 0, 0, time.UTC)}
 	lines := []Line{
 		{Day: r.Start, Model: "a", USD: 1},
-		{Day: r.Start.AddDate(0, 0, 2), Model: "b", USD: 5, InputTokens: 10},
+		{Day: r.Start.AddDate(0, 0, 2), Model: "b", USD: 5, Tokens: Tokens{Input: 10, CacheRead: 30}},
 		{Day: r.Start.AddDate(0, 0, 2), Model: "a", USD: 2},
 		{Day: r.End, Model: "a", USD: 100}, // outside: end is exclusive
 	}
@@ -21,7 +21,7 @@ func TestSummarize(t *testing.T) {
 	if want := []float64{1, 0, 7}; len(s.Daily) != 3 || s.Daily[0] != want[0] || s.Daily[2] != want[2] {
 		t.Fatalf("daily = %v, want %v", s.Daily, want)
 	}
-	if s.Models[0].Model != "b" || s.Models[1].USD != 3 || s.Models[0].InputTokens != 10 {
+	if s.Models[0].Model != "b" || s.Models[1].USD != 3 || s.Models[0].Input != 10 || s.Tokens.CacheHitRate() != 0.75 {
 		t.Fatalf("models = %+v", s.Models)
 	}
 }

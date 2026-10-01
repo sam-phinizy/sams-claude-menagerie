@@ -33,8 +33,8 @@ func TestSyncBackfillsThenRestatesTail(t *testing.T) {
 		var out []spend.Line
 		for d := start; d.Before(end); d = d.AddDate(0, 0, 1) {
 			// Two lines for the same model and day must be summed on store.
-			out = append(out, spend.Line{Day: d, Model: "m", USD: usd, InputTokens: 10},
-				spend.Line{Day: d, Model: "m", USD: usd, OutputTokens: 5})
+			out = append(out, spend.Line{Day: d, Model: "m", USD: usd, Tokens: spend.Tokens{Input: 10, CacheRead: 7}},
+				spend.Line{Day: d, Model: "m", USD: usd, Tokens: spend.Tokens{Output: 5, CacheWrite: 3}})
 		}
 		return out
 	}}
@@ -45,7 +45,8 @@ func TestSyncBackfillsThenRestatesTail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(lines) != 11 || lines[0].USD != 2 || lines[0].InputTokens != 10 || lines[0].OutputTokens != 5 {
+	if len(lines) != 11 || lines[0].USD != 2 ||
+		lines[0].Tokens != (spend.Tokens{Input: 10, CacheRead: 7, CacheWrite: 3, Output: 5}) {
 		t.Fatalf("after backfill: %d lines, first %+v", len(lines), lines[0])
 	}
 	if !p.calls[0][0].Equal(day("2026-09-10")) || !p.calls[0][1].Equal(day("2026-09-21")) {
@@ -76,5 +77,41 @@ func TestSyncBackfillsThenRestatesTail(t *testing.T) {
 	cached, at, err := sy.Cached(context.Background(), now)
 	if err != nil || len(cached) != 11 || at.IsZero() {
 		t.Fatalf("cached = %d lines, at %v, err %v", len(cached), at, err)
+	}
+}
+
+// A database written before the cache columns existed opens and loads, with
+// the new columns reading as zero.
+func TestOpenMigratesOldSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.duckdb")
+	st, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`DROP TABLE spend`,
+		`CREATE TABLE spend (provider VARCHAR NOT NULL, day DATE NOT NULL, model VARCHAR NOT NULL,
+			usd DOUBLE NOT NULL, input_tokens BIGINT NOT NULL, output_tokens BIGINT NOT NULL,
+			fetched_at TIMESTAMPTZ NOT NULL, PRIMARY KEY (provider, day, model))`,
+		`INSERT INTO spend VALUES ('Claude', DATE '2026-09-01', 'm', 1.5, 10, 2, now())`,
+	} {
+		if _, err := st.db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st.Close()
+
+	st, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	lines, err := st.Load(context.Background(), "Claude", day("2026-01-01"))
+	if err != nil || len(lines) != 1 || lines[0].Tokens != (spend.Tokens{Input: 10, Output: 2}) {
+		t.Fatalf("lines = %+v, err %v", lines, err)
+	}
+	if err := st.Replace(context.Background(), "Claude", day("2026-09-01"), day("2026-09-02"),
+		[]spend.Line{{Day: day("2026-09-01"), Model: "m", USD: 2, Tokens: spend.Tokens{CacheRead: 9}}}); err != nil {
+		t.Fatal(err)
 	}
 }

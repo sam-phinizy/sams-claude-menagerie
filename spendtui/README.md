@@ -9,6 +9,7 @@ instantly from cache, keeps working offline, and you can query it yourself.
 ![Week over week](docs/weekly.png)
 ![Model by model](docs/models.png)
 ![Overview](docs/overview.png)
+![Claude tokens](docs/claude.png)
 
 <sub>Screenshots use `--demo` data.</sub>
 
@@ -20,7 +21,7 @@ instantly from cache, keeps working offline, and you can query it yourself.
 | `2` | Weekly | Week over week: last 7 days vs the 7 before for each provider, a 12-week sparkline, and a table of calendar weeks (Monday start) with the change from the week before |
 | `3` | Models | Every model from both providers, sorted by spend in the selected range, with last 7d / prior 7d / change and a 12-week sparkline. `j`/`k` move the cursor; the selected model's daily chart and token totals show underneath |
 | `4` | Daily | Day-by-day table, newest first, with per-provider columns and a total bar |
-| `5` | Claude | Daily chart, plus a per-model breakdown with spend, share and token counts |
+| `5` | Claude | Daily chart, a token summary (input, cache reads with hit rate, cache writes, output), and a per-model table with spend, share and the same token columns |
 | `6` | Fireworks | The same, per model / dedicated deployment / training job |
 
 Other keys: `←`/`→` (or `h`/`l`) cycle the range (Month to date, Last 7 days,
@@ -51,9 +52,11 @@ Try it without keys: `spendtui --demo`
 ## Configure
 
 ```fish
-# Claude: needs an *Admin* API key (Console → Settings → Admin keys).
-# Regular sk-ant-api keys are rejected by the cost endpoint.
+# Claude: an organization-level credential (see "Which Anthropic key?" below).
 set -Ux ANTHROPIC_ADMIN_KEY sk-ant-admin01-...
+# …or, instead of a key, a command that prints an org:admin OAuth token.
+# It runs on every request, so short-lived tokens are always fresh.
+set -Ux SPENDTUI_CLAUDE_TOKEN_CMD "ant auth print-credentials --profile admin --access-token"
 
 # Fireworks: an API key plus your account id (`firectl whoami` shows it).
 set -Ux FIREWORKS_API_KEY fw_...
@@ -65,6 +68,21 @@ set -Ux SPENDTUI_FIREWORKS_BUDGET 250
 ```
 
 Configure either provider or both; whichever has credentials shows up.
+
+### Which Anthropic key?
+
+Claude's cost and usage reports are part of the Admin API, which accepts:
+
+| Credential | Works? |
+|---|---|
+| Admin API key (`sk-ant-admin…`), created by an org admin under Console → Settings → Admin keys | ✅ |
+| Personal or service-account API key that **isn't scoped to a workspace** | ✅ (with the permissions of the account it belongs to) |
+| OAuth token with the `org:admin` scope (`ant auth login --profile admin --scope org:admin`) | ✅ via `SPENDTUI_CLAUDE_TOKEN_CMD` |
+| Workspace API key (the usual `sk-ant-api…` key an app uses) | ❌ |
+| Individual (non-organization) Console account | ❌ no Admin API at all |
+
+`ANTHROPIC_API_KEY` is deliberately ignored, since it's almost always a
+workspace key. If the key is rejected, the Claude card says which kinds work.
 
 Flags: `--claude-budget`, `--fireworks-budget` (override the env vars),
 `--refresh 5m` (auto-refresh interval; `0` disables), `--range 1-5` (initial
@@ -80,8 +98,11 @@ Spend lives in `~/.local/share/spendtui/spend.duckdb` (or under
 `$XDG_DATA_HOME`; override with `--db`). One table:
 
 ```sql
-spend(provider, day DATE, model, usd DOUBLE, input_tokens, output_tokens, fetched_at)
--- primary key (provider, day, model)
+spend(provider, day DATE, model, usd DOUBLE,
+      input_tokens, cache_read_tokens, cache_write_tokens, output_tokens,
+      fetched_at)
+-- primary key (provider, day, model); input_tokens excludes cached tokens
+-- files from earlier versions gain the cache columns automatically
 ```
 
 - **First run** backfills `--backfill-days` (default 180) per provider.
@@ -107,8 +128,9 @@ duckdb ~/.local/share/spendtui/spend.duckdb "
 
 | Provider | Endpoint | Notes |
 |---|---|---|
-| Claude | `GET /v1/organizations/cost_report` (Anthropic Admin API) | Daily buckets grouped by `description`, so each line carries its model. Amounts are USD cents. Web search and code execution show up as their own rows. Priority Tier costs are **not** included in this endpoint. The Admin API isn't available to individual (non-organization) accounts. |
-| Fireworks | `GET /v1/accounts/{account}/billingUsage` | Daily buckets across `serverlessCosts`, `dedicatedCosts` and `trainingCosts`; cost is `costNanoUsd`. Windows are capped at 31 days, so longer ranges are fetched in chunks. Fireworks reports `0` cost when a line has no authoritative rate yet, which doesn't mean it was free. |
+| Claude | `GET /v1/organizations/cost_report` (Anthropic Admin API) | Dollars. Daily buckets grouped by `description`, so each line carries its model. Amounts are USD cents. Web search and code execution show up as their own rows. Priority Tier costs are **not** included in this endpoint. The Admin API isn't available to individual (non-organization) accounts. |
+| Claude | `GET /v1/organizations/usage_report/messages` | Tokens, grouped by model: uncached input, cache reads, cache writes (5-minute and 1-hour combined) and output. Joined to dollars by model id. |
+| Fireworks | `GET /v1/accounts/{account}/billingUsage` | Daily buckets across `serverlessCosts`, `dedicatedCosts` and `trainingCosts`; cost is `costNanoUsd`; `cachedPromptTokens` (a subset of `promptTokens`) becomes cache reads. Windows are capped at 31 days, so longer ranges are fetched in chunks. Fireworks reports `0` cost when a line has no authoritative rate yet, which doesn't mean it was free. |
 
 Switching ranges or views never refetches; everything is computed from the
 stored history. Both APIs lag real usage by a few minutes.

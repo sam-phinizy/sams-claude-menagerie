@@ -52,12 +52,16 @@ func (p *Provider) Fetch(ctx context.Context, start, end time.Time) ([]spend.Lin
 				usd *= 0.35
 			}
 			usd = math.Round(usd*100) / 100
-			var in, out int64
+			var t spend.Tokens
 			if m.usdPerMTok > 0 {
 				tok := usd / m.usdPerMTok * 1e6
-				in, out = int64(tok*0.85), int64(tok*0.15)
+				hit := 0.25 + 0.5*(jitter("cache"+m.name)-0.3)/1.4 // stable per model, 25–75%
+				t.CacheRead = int64(tok * 3 * hit)                 // cache reads are cheap, so there are many
+				t.CacheWrite = int64(tok * 0.05)
+				t.Input = int64(tok*3*(1-hit)) - t.CacheWrite
+				t.Output = int64(tok * 0.15)
 			}
-			lines = append(lines, spend.Line{Day: d, Model: m.name, USD: usd, InputTokens: in, OutputTokens: out})
+			lines = append(lines, spend.Line{Day: d, Model: m.name, USD: usd, Tokens: t})
 		}
 	}
 	return lines, nil

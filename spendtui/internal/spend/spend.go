@@ -11,11 +11,38 @@ import (
 // Line is one rated cost bucket: what a provider charged for one model (or
 // line item) on one UTC day.
 type Line struct {
-	Day          time.Time // midnight UTC
-	Model        string
-	USD          float64
-	InputTokens  int64
-	OutputTokens int64
+	Day   time.Time // midnight UTC
+	Model string
+	USD   float64
+	Tokens
+}
+
+// Tokens counts usage by kind. Input excludes cached tokens, so the four
+// fields never overlap.
+type Tokens struct {
+	Input      int64 // uncached prompt tokens
+	CacheRead  int64 // prompt tokens served from cache
+	CacheWrite int64 // prompt tokens written to cache
+	Output     int64
+}
+
+func (t *Tokens) Add(o Tokens) {
+	t.Input += o.Input
+	t.CacheRead += o.CacheRead
+	t.CacheWrite += o.CacheWrite
+	t.Output += o.Output
+}
+
+// Prompt is every input-side token, cached or not.
+func (t Tokens) Prompt() int64 { return t.Input + t.CacheRead + t.CacheWrite }
+
+// CacheHitRate is the share of prompt tokens read from cache, or -1 when
+// there were none.
+func (t Tokens) CacheHitRate() float64 {
+	if p := t.Prompt(); p > 0 {
+		return float64(t.CacheRead) / float64(p)
+	}
+	return -1
 }
 
 // Provider fetches rated costs for the half-open UTC window [start, end).
@@ -56,15 +83,15 @@ func Ranges(now time.Time) []Range {
 
 // ModelTotal is a per-model rollup.
 type ModelTotal struct {
-	Model        string
-	USD          float64
-	InputTokens  int64
-	OutputTokens int64
+	Model string
+	USD   float64
+	Tokens
 }
 
 // Summary is everything the UI needs about one provider over one range.
 type Summary struct {
 	Total  float64
+	Tokens Tokens
 	Daily  []float64 // one entry per day of the range, oldest first
 	Models []ModelTotal
 }
@@ -86,8 +113,8 @@ func Summarize(lines []Line, r Range) Summary {
 			byModel[l.Model] = m
 		}
 		m.USD += l.USD
-		m.InputTokens += l.InputTokens
-		m.OutputTokens += l.OutputTokens
+		m.Tokens.Add(l.Tokens)
+		s.Tokens.Add(l.Tokens)
 	}
 	for _, m := range byModel {
 		s.Models = append(s.Models, *m)

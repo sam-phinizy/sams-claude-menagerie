@@ -40,7 +40,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, `spendtui — Claude + Fireworks spend in your terminal
 
 Environment:
-  ANTHROPIC_ADMIN_KEY    Anthropic Admin API key (sk-ant-admin...)
+  ANTHROPIC_ADMIN_KEY    Anthropic Admin API key (sk-ant-admin...), or a personal /
+                         service-account key that isn't scoped to a workspace
+  SPENDTUI_CLAUDE_TOKEN_CMD
+                         instead of a key: a command printing an org:admin OAuth
+                         token, e.g. "ant auth print-credentials --profile admin --access-token"
   FIREWORKS_API_KEY      Fireworks API key
   FIREWORKS_ACCOUNT_ID   Fireworks account id (as shown by `+"`firectl whoami`"+`)
 
@@ -57,8 +61,8 @@ Flags:
 		providers = []spend.Provider{demo.Claude(), demo.Fireworks()}
 		budgets["Claude"], budgets["Fireworks"] = or(*claudeBudget, 400), or(*fwBudget, 250)
 	} else {
-		if k := os.Getenv("ANTHROPIC_ADMIN_KEY"); k != "" {
-			providers = append(providers, anthropic.New(k))
+		if auth := claudeAuth(); auth != nil {
+			providers = append(providers, anthropic.New(auth))
 			budgets["Claude"] = *claudeBudget
 		}
 		if k := os.Getenv("FIREWORKS_API_KEY"); k != "" {
@@ -67,7 +71,7 @@ Flags:
 		}
 	}
 	if len(providers) == 0 {
-		fail(2, "no providers configured. Set ANTHROPIC_ADMIN_KEY and/or FIREWORKS_API_KEY + FIREWORKS_ACCOUNT_ID, or run with --demo.")
+		fail(2, "no providers configured. Set ANTHROPIC_ADMIN_KEY (or SPENDTUI_CLAUDE_TOKEN_CMD) and/or FIREWORKS_API_KEY + FIREWORKS_ACCOUNT_ID, or run with --demo.")
 	}
 
 	st, err := store.Open(*dbPath)
@@ -98,6 +102,19 @@ Flags:
 	if _, err := tea.NewProgram(ui.New(srcs, *every, *rangeNum-1), tea.WithAltScreen()).Run(); err != nil {
 		fail(1, err.Error())
 	}
+}
+
+// claudeAuth picks the Claude credential: an x-api-key credential wins over a
+// token command. Workspace API keys can't read cost reports, so
+// ANTHROPIC_API_KEY is deliberately not used.
+func claudeAuth() anthropic.Auth {
+	if k := os.Getenv("ANTHROPIC_ADMIN_KEY"); k != "" {
+		return anthropic.APIKey(k)
+	}
+	if cmd := os.Getenv("SPENDTUI_CLAUDE_TOKEN_CMD"); cmd != "" {
+		return anthropic.BearerCommand(cmd)
+	}
+	return nil
 }
 
 func fail(code int, msg string) {

@@ -66,6 +66,7 @@ type bucket struct {
 	BaseModel        string    `json:"baseModel"`
 	JobType          string    `json:"jobType"`
 	PromptTokens     num       `json:"promptTokens"`
+	CachedTokens     num       `json:"cachedPromptTokens"`
 	CompletionTokens num       `json:"completionTokens"`
 	CostNanoUSD      num       `json:"costNanoUsd"`
 }
@@ -112,12 +113,17 @@ func (c *Client) Fetch(ctx context.Context, start, end time.Time) ([]spend.Line,
 }
 
 func line(b bucket, model string) spend.Line {
+	// cachedPromptTokens is a subset of promptTokens.
+	cached := min(int64(b.CachedTokens), int64(b.PromptTokens))
 	return spend.Line{
-		Day:          spend.Day(b.StartTime),
-		Model:        model,
-		USD:          float64(b.CostNanoUSD) / 1e9,
-		InputTokens:  int64(b.PromptTokens),
-		OutputTokens: int64(b.CompletionTokens),
+		Day:   spend.Day(b.StartTime),
+		Model: model,
+		USD:   float64(b.CostNanoUSD) / 1e9,
+		Tokens: spend.Tokens{
+			Input:     int64(b.PromptTokens) - cached,
+			CacheRead: cached,
+			Output:    int64(b.CompletionTokens),
+		},
 	}
 }
 

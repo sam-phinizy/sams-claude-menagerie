@@ -206,12 +206,11 @@ func (m Model) models(r spend.Range) string {
 
 	sel := rows[cursor]
 	sum := spend.Summarize(sel.lines, r)
-	var in, out int64
-	for _, mt := range sum.Models {
-		in, out = in+mt.InputTokens, out+mt.OutputTokens
-	}
 	detailTitle := lipgloss.NewStyle().Bold(true).Foreground(sel.src.color).Render(sel.model) +
-		mutedStyle.Render(fmt.Sprintf("  %s · %s in range · in %s · out %s", sel.src.Name, usd(sum.Total), tokens(in), tokens(out)))
+		mutedStyle.Render(fmt.Sprintf("  %s · %s in range", sel.src.Name, usd(sum.Total)))
+	if ts := tokenSummary(sum.Tokens); ts != "" {
+		detailTitle += mutedStyle.Render(" · " + ts)
+	}
 	chartH := max(min(m.height-len(rows)-14, 8), 3)
 	chart := columnChart([]series{{sum.Daily, sel.src.color}}, chartH, m.contentWidth(),
 		r.Start.Format("Jan 2"), r.End.AddDate(0, 0, -1).Format("Jan 2"))
@@ -240,28 +239,33 @@ func (m Model) providerView(s *source, r spend.Range) string {
 		stats = append(stats, mutedStyle.Render(fmt.Sprintf("avg/day %s · peak %s on %s",
 			usd(sum.Total/float64(r.Days())), usd(peak), r.Start.AddDate(0, 0, peakDay).Format("Jan 2"))))
 	}
+	if ts := tokenSummary(sum.Tokens); ts != "" {
+		stats = append(stats, mutedStyle.Render("tokens: "+ts))
+	}
 	if s.err != nil {
 		stats = append(stats, errStyle.Width(m.contentWidth()).Render(s.err.Error()))
 	}
-	chart := columnChart([]series{{sum.Daily, s.color}}, max(min(m.height-20, 10), 4), m.contentWidth(),
+	chart := columnChart([]series{{sum.Daily, s.color}}, max(min(m.height-21, 10), 4), m.contentWidth(),
 		r.Start.Format("Jan 2"), r.End.AddDate(0, 0, -1).Format("Jan 2"))
 
-	nameW := 32
-	barW := max(m.contentWidth()-nameW-40, 6)
-	rows := []string{boldStyle.Render(fmt.Sprintf("%-*s %10s %6s %8s %8s  %s", nameW, "Model", "Spend", "Share", "In", "Out", ""))}
+	nameW := 30
+	barW := max(m.contentWidth()-nameW-62, 6)
+	rows := []string{boldStyle.Render(fmt.Sprintf("%-*s %10s %6s %8s %8s %8s %8s %5s  %s",
+		nameW, "Model", "Spend", "Share", "Input", "Cache R", "Cache W", "Output", "Hit", ""))}
 	for _, mt := range sum.Models {
 		share := 0.0
 		if sum.Total > 0 {
 			share = mt.USD / sum.Total
 		}
-		rows = append(rows, fmt.Sprintf("%-*s %10s %5.1f%% %8s %8s  %s",
+		rows = append(rows, fmt.Sprintf("%-*s %10s %5.1f%% %8s %8s %8s %8s %5s  %s",
 			nameW, truncate(mt.Model, nameW), usd(mt.USD), share*100,
-			tokens(mt.InputTokens), tokens(mt.OutputTokens), hbar(share, barW, s.color)))
+			tokens(mt.Input), tokens(mt.CacheRead), tokens(mt.CacheWrite), tokens(mt.Output),
+			hitRate(mt.Tokens), hbar(share, barW, s.color)))
 	}
 	if len(sum.Models) == 0 {
 		rows = append(rows, mutedStyle.Render("no spend in this range"))
 	}
-	rows = m.window(rows, 1, max(m.height-18-strings.Count(chart, "\n"), 3))
+	rows = m.window(rows, 1, max(m.height-19-strings.Count(chart, "\n"), 3))
 	return lipgloss.JoinVertical(lipgloss.Left, strings.Join(stats, "\n"), "", chart, "", strings.Join(rows, "\n"))
 }
 

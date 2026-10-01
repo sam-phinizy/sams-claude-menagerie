@@ -27,7 +27,10 @@ CREATE TABLE IF NOT EXISTS spend (
 	output_tokens BIGINT      NOT NULL,
 	fetched_at    TIMESTAMPTZ NOT NULL,
 	PRIMARY KEY (provider, day, model)
-)`
+);
+-- Added after the first release; existing files gain them in place.
+ALTER TABLE spend ADD COLUMN IF NOT EXISTS cache_read_tokens  BIGINT DEFAULT 0;
+ALTER TABLE spend ADD COLUMN IF NOT EXISTS cache_write_tokens BIGINT DEFAULT 0;`
 
 type Store struct{ db *sql.DB }
 
@@ -82,8 +85,7 @@ func (s *Store) Replace(ctx context.Context, provider string, start, end time.Ti
 		k := key{d, l.Model}
 		if m := merged[k]; m != nil {
 			m.USD += l.USD
-			m.InputTokens += l.InputTokens
-			m.OutputTokens += l.OutputTokens
+			m.Tokens.Add(l.Tokens)
 		} else {
 			c := l
 			c.Day = d
@@ -102,7 +104,9 @@ func (s *Store) Replace(ctx context.Context, provider string, start, end time.Ti
 		return err
 	}
 	stmt, err := tx.PrepareContext(ctx,
-		`INSERT INTO spend VALUES (?, CAST(? AS DATE), ?, ?, ?, ?, ?)`)
+		`INSERT INTO spend (provider, day, model, usd, input_tokens, output_tokens,
+		                    cache_read_tokens, cache_write_tokens, fetched_at)
+		 VALUES (?, CAST(? AS DATE), ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -110,7 +114,7 @@ func (s *Store) Replace(ctx context.Context, provider string, start, end time.Ti
 	now := time.Now().UTC()
 	for _, l := range merged {
 		if _, err := stmt.ExecContext(ctx, provider, l.Day.Format(time.DateOnly), l.Model,
-			l.USD, l.InputTokens, l.OutputTokens, now); err != nil {
+			l.USD, l.Input, l.Output, l.CacheRead, l.CacheWrite, now); err != nil {
 			return err
 		}
 	}
@@ -120,7 +124,8 @@ func (s *Store) Replace(ctx context.Context, provider string, start, end time.Ti
 // Load returns provider's lines on or after since, oldest first.
 func (s *Store) Load(ctx context.Context, provider string, since time.Time) ([]spend.Line, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT strftime(day, '%Y-%m-%d'), model, usd, input_tokens, output_tokens
+		`SELECT strftime(day, '%Y-%m-%d'), model, usd, input_tokens, output_tokens,
+		        coalesce(cache_read_tokens, 0), coalesce(cache_write_tokens, 0)
 		 FROM spend WHERE provider = ? AND day >= CAST(? AS DATE) ORDER BY day, model`,
 		provider, since.Format(time.DateOnly))
 	if err != nil {
@@ -131,7 +136,7 @@ func (s *Store) Load(ctx context.Context, provider string, since time.Time) ([]s
 	for rows.Next() {
 		var day string
 		var l spend.Line
-		if err := rows.Scan(&day, &l.Model, &l.USD, &l.InputTokens, &l.OutputTokens); err != nil {
+		if err := rows.Scan(&day, &l.Model, &l.USD, &l.Input, &l.Output, &l.CacheRead, &l.CacheWrite); err != nil {
 			return nil, err
 		}
 		if l.Day, err = time.Parse(time.DateOnly, day); err != nil {
